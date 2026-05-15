@@ -144,11 +144,6 @@ def format_message(film: dict, description: str, genre: str) -> str:
 
     msg += f"\n🔗 <a href=\"{film['url']}\">Смотреть на HDRezka</a>"
 
-    if TORSERVE_URL:
-        search_query = f"{film['title']} {film['year']}".strip()
-        torserve_link = f"{TORSERVE_URL}/search?query={requests.utils.quote(search_query)}"
-        msg += f" | <a href=\"{torserve_link}\">4K Torrent</a>"
-
     return msg
 
 
