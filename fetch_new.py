@@ -27,6 +27,7 @@ HEADERS = {
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+TORSERVE_URL = os.environ.get("TORSERVE_URL", "")
 
 
 def load_state() -> set:
@@ -134,7 +135,6 @@ def format_message(film: dict, description: str, genre: str) -> str:
     msg = f"<b>🎬 {film['title']}{year_str}</b>\n\n"
 
     if description:
-        # Обрезаем до 800 символов (лимит Telegram ~4096, но лучше короче)
         if len(description) > 800:
             description = description[:797] + "..."
         msg += f"{description}\n\n"
@@ -143,6 +143,11 @@ def format_message(film: dict, description: str, genre: str) -> str:
         msg += f"🎭 {genre}\n"
 
     msg += f"\n🔗 <a href=\"{film['url']}\">Смотреть на HDRezka</a>"
+
+    if TORSERVE_URL:
+        search_query = f"{film['title']} {film['year']}".strip()
+        torserve_link = f"{TORSERVE_URL}/search?query={requests.utils.quote(search_query)}"
+        msg += f" | <a href=\"{torserve_link}\">4K Torrent</a>"
 
     return msg
 
