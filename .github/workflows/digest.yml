@@ -1,0 +1,36 @@
+name: HDRezka Daily Digest
+
+on:
+  schedule:
+    # 19:00 EET (UTC+2) = 17:00 UTC
+    - cron: "0 17 * * *"
+  workflow_dispatch: # Ручной запуск
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore state.json from cache
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: hdrezka-state-${{ github.ref }}
+          restore-keys: hdrezka-state-
+
+      - name: Run digest
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python fetch_new.py
