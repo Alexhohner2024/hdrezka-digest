@@ -1,9 +1,9 @@
-name: HDRezka Daily Digest
+name: HDRezka New Movies Monitor
 
 on:
   schedule:
-    # 19:00 EET (UTC+2) = 17:00 UTC
-    - cron: "0 17 * * *"
+    # Every 30 minutes
+    - cron: "*/30 * * * *"
   workflow_dispatch: # Ручной запуск
 
 jobs:
