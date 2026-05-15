@@ -148,6 +148,11 @@ def format_message(film: dict, description: str, genre: str) -> str:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--limit", type=int, default=0, help="Лимит новых фильмов (0 = все)")
+    args = parser.parse_args()
+
     print("🔍 Проверка новых фильмов на HDRezka...")
 
     seen_ids = load_state()
@@ -158,6 +163,10 @@ def main():
 
     new_films = [f for f in films if f["id"] not in seen_ids]
     print(f"  Новых: {len(new_films)}")
+
+    if args.limit > 0:
+        new_films = new_films[:args.limit]
+        print(f"  Лимит: отправим {len(new_films)}")
 
     if not new_films:
         print("✅ Новых фильмов нет.")
