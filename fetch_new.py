@@ -49,47 +49,54 @@ def fetch_new_films() -> list:
 
     films = []
     for film_id, film_url in matches:
-        # Извлекаем название из URL
-        slug = film_url.rstrip(".html").split("/")[-1]
-        # Убираем год в конце
-        title_match = re.match(r"(.+?)-(\d{4})$", slug)
-        if title_match:
-            title = title_match.group(1).replace("-", " ").capitalize()
-            year = title_match.group(2)
-        else:
-            title = slug.replace("-", " ").capitalize()
-            year = ""
-
         films.append({
             "id": film_id,
-            "title": title,
-            "year": year,
             "url": film_url if film_url.startswith("http") else f"{REZKA_BASE}{film_url}",
         })
 
     return films
 
 
-def fetch_film_description(film_url: str) -> tuple:
-    """Заходит на страницу фильма и парсит описание + жанр."""
+def fetch_film_details(film_url: str) -> dict:
+    """Заходит на страницу фильма и парсит название, описание, жанр."""
     try:
         resp = requests.get(film_url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
+        # Название из h1
+        h1 = soup.find("h1")
+        title = h1.get_text(strip=True) if h1 else ""
+
+        # Год из og:title или b-post__info
+        year = ""
+        meta = soup.find("meta", property="og:title")
+        if meta:
+            og_content = meta.get("content", "")
+            year_match = re.search(r"\((\d{4})\)", og_content)
+            if year_match:
+                year = year_match.group(1)
+
+        if not year:
+            info_div = soup.find("div", class_="b-post__info")
+            if info_div:
+                info_text = info_div.get_text()
+                year_match = re.search(r"(\d{4})\s+года", info_text)
+                if year_match:
+                    year = year_match.group(1)
+
         # Описание
         desc_el = soup.find("div", class_="b-post__description_text")
         description = desc_el.get_text(strip=True) if desc_el else ""
 
-        # Жанр / страна из мета-информации
-        info_div = soup.find("div", class_="b-post__info")
+        # Жанр / страна
         genre = ""
+        info_div = soup.find("div", class_="b-post__info")
         if info_div:
             genre_spans = info_div.find_all("span", class_="ellipsis")
             if genre_spans:
                 genre = ", ".join(s.get_text(strip=True) for s in genre_spans[:3])
 
-        # Если не нашли через b-post__info, пробуем альтернативу
         if not genre:
             genre_div = soup.find("div", class_="b-post__origtitle")
             if genre_div:
@@ -97,10 +104,10 @@ def fetch_film_description(film_url: str) -> tuple:
                 if next_div:
                     genre = next_div.get_text(strip=True)[:100]
 
-        return description, genre
+        return {"title": title, "year": year, "description": description, "genre": genre}
     except Exception as e:
         print(f"  Ошибка парсинга {film_url}: {e}", file=sys.stderr)
-        return "", ""
+        return {"title": "", "year": "", "description": "", "genre": ""}
 
 
 def send_telegram(text: str) -> bool:
@@ -158,13 +165,13 @@ def main():
 
     sent_count = 0
     for i, film in enumerate(new_films, 1):
-        print(f"\n  [{i}/{len(new_films)}] {film['title']} ({film['year']})")
+        print(f"\n  [{i}/{len(new_films)}] Загрузка страницы {film['url']}...")
 
-        description, genre = fetch_film_description(film["url"])
-        msg = format_message(film, description, genre)
+        details = fetch_film_details(film["url"])
+        msg = format_message({**film, **details}, details["description"], details["genre"])
 
         if send_telegram(msg):
-            print(f"    ✅ Отправлено в Telegram")
+            print(f"    ✅ Отправлено: {details['title']} ({details['year']})")
             sent_count += 1
         else:
             print(f"    ❌ Ошибка отправки")
