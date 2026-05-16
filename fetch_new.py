@@ -58,18 +58,22 @@ def fetch_page(url: str, timeout: int = 30000) -> str:
     page = context.new_page()
     try:
         page.goto(url, wait_until="load", timeout=timeout)
+        page_title = page.title()
+        print(f"  Page title: {page_title}")
+        print(f"  Final URL: {page.url}")
         try:
-            page.wait_for_selector(".b-content-item", timeout=10000)
+            page.wait_for_selector('[data-id]', timeout=15000)
         except Exception:
-            pass
-        page.wait_for_timeout(2000)
+            print(f"  No [data-id] elements found via selector")
+        page.wait_for_timeout(3000)
         content = page.content()
         if not re.findall(r'data-id="(\d+)"', content):
-            page.wait_for_timeout(5000)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(3000)
             content = page.content()
-        if not re.findall(r'data-id="(\d+)"', content):
-            page.goto(url, wait_until="networkidle", timeout=30000)
-            content = page.content()
+        body = page.evaluate("document.body.innerText")
+        print(f"  Body text length: {len(body)} chars")
+        print(f"  Body starts: {body[:200]}")
         return content
     finally:
         context.close()
