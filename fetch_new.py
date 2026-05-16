@@ -27,21 +27,21 @@ CHAT_ID = os.environ["CHAT_ID"]
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 
+_PLAYWRIGHT = None
 _BROWSER = None
 
 
 def get_browser():
-    global _BROWSER
+    global _PLAYWRIGHT, _BROWSER
     if _BROWSER is None:
-        _playwright = sync_playwright().start()
-        _BROWSER = _playwright.chromium.launch(
+        _PLAYWRIGHT = sync_playwright().start()
+        _BROWSER = _PLAYWRIGHT.chromium.launch(
             headless=True,
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-web-security",
-                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-blink-features=AutomationControlled",
             ],
         )
     return _BROWSER
@@ -51,12 +51,18 @@ def fetch_page(url: str, timeout: int = 30000) -> str:
     """Загружает страницу через Playwright (обходит Cloudflare)."""
     browser = get_browser()
     context = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        viewport={"width": 1920, "height": 1080},
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         locale="ru-RU",
         timezone_id="Europe/Moscow",
     )
     page = context.new_page()
     try:
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['ru-RU', 'ru', 'en'] });
+        """)
         page.goto(url, wait_until="load", timeout=timeout)
         page_title = page.title()
         print(f"  Page title: {page_title}")
@@ -73,7 +79,7 @@ def fetch_page(url: str, timeout: int = 30000) -> str:
             content = page.content()
         body = page.evaluate("document.body.innerText")
         print(f"  Body text length: {len(body)} chars")
-        print(f"  Body starts: {body[:200]}")
+        print(f"  Body starts: {body[:300]}")
         return content
     finally:
         context.close()
