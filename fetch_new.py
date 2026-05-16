@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-HDRezka Daily Digest — парсит новые фильмы и отправляет в Telegram.
-Запускается по cron (GitHub Actions) каждый день в 19:00 EET.
+HDRezka New Movies Monitor — парсит новые фильмы и отправляет в Telegram.
+Запускается по cron (GitHub Actions) каждые 30 минут.
 """
 
 import json
@@ -27,7 +27,6 @@ HEADERS = {
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-TORSERVE_URL = os.environ.get("TORSERVE_URL", "")
 
 
 def load_state() -> set:
@@ -59,7 +58,7 @@ def fetch_new_films() -> list:
 
 
 def fetch_film_details(film_url: str) -> dict:
-    """Заходит на страницу фильма и парсит название, описание, жанр."""
+    """Заходит на страницу фильма и парсит полную информацию."""
     try:
         resp = requests.get(film_url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
@@ -69,7 +68,7 @@ def fetch_film_details(film_url: str) -> dict:
         h1 = soup.find("h1")
         title = h1.get_text(strip=True) if h1 else ""
 
-        # Год из og:title или b-post__info
+        # Год из og:title
         year = ""
         meta = soup.find("meta", property="og:title")
         if meta:
@@ -78,37 +77,35 @@ def fetch_film_details(film_url: str) -> dict:
             if year_match:
                 year = year_match.group(1)
 
-        if not year:
-            info_div = soup.find("div", class_="b-post__info")
-            if info_div:
-                info_text = info_div.get_text()
-                year_match = re.search(r"(\d{4})\s+года", info_text)
-                if year_match:
-                    year = year_match.group(1)
+        # Полная информация из таблицы
+        info = {}
+        table = soup.find("table", class_="b-post__info")
+        if table:
+            rows = table.find_all("tr")
+            for row in rows:
+                tds = row.find_all("td")
+                if len(tds) >= 2:
+                    label = tds[0].get_text(strip=True).rstrip(":")
+                    value = tds[1].get_text(strip=True)
+                    # Убираем "Смотреть трейлер"
+                    value = re.sub(r"Смотреть трейлер\s*", "", value).strip()
+                    if label and value:
+                        info[label] = value
 
-        # Описание
+        # Описание (убираем "Смотреть трейлер")
         desc_el = soup.find("div", class_="b-post__description_text")
         description = desc_el.get_text(strip=True) if desc_el else ""
+        description = re.sub(r"Смотреть трейлер\s*", "", description).strip()
 
-        # Жанр / страна
-        genre = ""
-        info_div = soup.find("div", class_="b-post__info")
-        if info_div:
-            genre_spans = info_div.find_all("span", class_="ellipsis")
-            if genre_spans:
-                genre = ", ".join(s.get_text(strip=True) for s in genre_spans[:3])
-
-        if not genre:
-            genre_div = soup.find("div", class_="b-post__origtitle")
-            if genre_div:
-                next_div = genre_div.find_next_sibling("div")
-                if next_div:
-                    genre = next_div.get_text(strip=True)[:100]
-
-        return {"title": title, "year": year, "description": description, "genre": genre}
+        return {
+            "title": title,
+            "year": year,
+            "description": description,
+            "info": info,
+        }
     except Exception as e:
         print(f"  Ошибка парсинга {film_url}: {e}", file=sys.stderr)
-        return {"title": "", "year": "", "description": "", "genre": ""}
+        return {"title": "", "year": "", "description": "", "info": {}}
 
 
 def send_telegram(text: str) -> bool:
@@ -130,7 +127,7 @@ def send_telegram(text: str) -> bool:
         return False
 
 
-def format_message(film: dict, description: str, genre: str) -> str:
+def format_message(film: dict, description: str, info: dict) -> str:
     year_str = f" ({film['year']})" if film["year"] else ""
     msg = f"<b>🎬 {film['title']}{year_str}</b>\n\n"
 
@@ -139,8 +136,25 @@ def format_message(film: dict, description: str, genre: str) -> str:
             description = description[:797] + "..."
         msg += f"{description}\n\n"
 
-    if genre:
-        msg += f"🎭 {genre}\n"
+    # Полная информация с эмодзи
+    emoji_map = {
+        "Рейтинги": "⭐",
+        "Дата выхода": "📅",
+        "Страна": "🌍",
+        "Режиссер": "🎥",
+        "Жанр": "🎭",
+        "В качестве": "📺",
+        "В переводе": "🗣️",
+        "Возраст": "🔞",
+        "Время": "⏱️",
+        "Из серии": "📂",
+    }
+
+    for key, emoji in emoji_map.items():
+        if key in info:
+            value = info[key]
+            # Убираем "фильмы" из серий если есть
+            msg += f"{emoji} <b>{key}:</b> {value}\n"
 
     msg += f"\n🔗 <a href=\"{film['url']}\">Смотреть на HDRezka</a>"
 
@@ -150,7 +164,7 @@ def format_message(film: dict, description: str, genre: str) -> str:
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, default=0, help="Лимит новых фильмов (0 = все)")
+    parser.add_argument("--limit", type=int, default=1, help="Лимит новых фильмов за запуск (по умолчанию 1)")
     args = parser.parse_args()
 
     print("🔍 Проверка новых фильмов на HDRezka...")
@@ -177,7 +191,7 @@ def main():
         print(f"\n  [{i}/{len(new_films)}] Загрузка страницы {film['url']}...")
 
         details = fetch_film_details(film["url"])
-        msg = format_message({**film, **details}, details["description"], details["genre"])
+        msg = format_message({**film, **details}, details["description"], details["info"])
 
         if send_telegram(msg):
             print(f"    ✅ Отправлено: {details['title']} ({details['year']})")
@@ -185,12 +199,15 @@ def main():
         else:
             print(f"    ❌ Ошибка отправки")
 
-        # Небольшая задержка между запросами
         time.sleep(1)
 
-    # Обновляем state
+    # Обновляем state — все найденные фильмы помечаем как увиденные
     all_ids = seen_ids | {f["id"] for f in films}
     save_state(all_ids)
+
+    remaining = len([f for f in films if f["id"] not in seen_ids]) - sent_count
+    if remaining > 0:
+        print(f"\n⏳ Ещё {remaining} новых фильмов ждут следующего запуска")
 
     print(f"\n✅ Готово! Отправлено: {sent_count}/{len(new_films)}")
     return 0 if sent_count == len(new_films) else 1
