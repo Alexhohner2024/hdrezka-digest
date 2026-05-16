@@ -57,11 +57,18 @@ def fetch_page(url: str, timeout: int = 30000) -> str:
     )
     page = context.new_page()
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-        page.wait_for_timeout(3000)
+        page.goto(url, wait_until="load", timeout=timeout)
+        try:
+            page.wait_for_selector(".b-content-item", timeout=10000)
+        except Exception:
+            pass
+        page.wait_for_timeout(2000)
         content = page.content()
         if not re.findall(r'data-id="(\d+)"', content):
             page.wait_for_timeout(5000)
+            content = page.content()
+        if not re.findall(r'data-id="(\d+)"', content):
+            page.goto(url, wait_until="networkidle", timeout=30000)
             content = page.content()
         return content
     finally:
@@ -97,8 +104,10 @@ def fetch_new_films() -> list:
                 })
             print(f"  Домен работает: {domain}, найдено: {len(films)}")
             if not films:
-                snippet = html[500:1500] if len(html) > 1500 else html[:1000]
-                print(f"  DEBUG HTML snippet: {snippet[:300]}")
+                snippet = html[500:2500] if len(html) > 2500 else html[:1500]
+                print(f"  DEBUG HTML snippet:")
+                for line in snippet.split("\n")[:20]:
+                    print(f"    {line.strip()[:200]}")
             return films
         except Exception as e:
             last_error = e
