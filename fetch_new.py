@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HDRezka New Movies Monitor — парсит новые фильмы через Playwright и отправляет в Telegram.
+HDRezka New Movies Monitor — парсит новые фильмы и отправляет в Telegram.
 Запускается по cron (GitHub Actions) каждые 30 минут.
 """
 
@@ -13,72 +13,20 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 
 STATE_FILE = Path(__file__).parent / "state.json"
+REZKA_NEW_URL = "https://rezka.ag/new/?filter=last&genre=1"
+REZKA_BASE = "https://rezka.ag"
 
-DOMAINS = [
-    "https://hdrezka.ag",
-    "https://rezka.ag",
-]
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+}
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-
-_PLAYWRIGHT = None
-_BROWSER = None
-
-
-def get_browser():
-    global _PLAYWRIGHT, _BROWSER
-    if _BROWSER is None:
-        _PLAYWRIGHT = sync_playwright().start()
-        _BROWSER = _PLAYWRIGHT.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
-    return _BROWSER
-
-
-def fetch_page(url: str, timeout: int = 30000) -> str:
-    """Загружает страницу через Playwright (обходит Cloudflare)."""
-    browser = get_browser()
-    context = browser.new_context(
-        viewport={"width": 1920, "height": 1080},
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        locale="ru-RU",
-        timezone_id="Europe/Moscow",
-    )
-    page = context.new_page()
-    try:
-        page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['ru-RU', 'ru', 'en'] });
-        """)
-        page.goto(url, wait_until="load", timeout=timeout)
-        print(f"  Title: {page.title()}")
-        print(f"  Final URL: {page.url}")
-        try:
-            page.wait_for_selector('[data-id]', timeout=10000)
-        except Exception:
-            pass
-        page.wait_for_timeout(2000)
-        content = page.content()
-        if not re.findall(r'data-id="(\d+)"', content):
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(3000)
-            content = page.content()
-        return content
-    finally:
-        context.close()
 
 
 def load_state() -> set:
@@ -93,42 +41,34 @@ def save_state(seen_ids: set):
 
 
 def fetch_new_films() -> list:
-    last_error = None
-    for domain in DOMAINS:
-        url = f"{domain}/new/?filter=last&genre=1"
-        try:
-            print(f"  Пробуем домен: {domain}...")
-            html = fetch_page(url)
-            pattern = r'data-id="(\d+)"\s+data-url="(.*?)"'
-            matches = re.findall(pattern, html)
+    resp = requests.get(REZKA_NEW_URL, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
 
-            films = []
-            for film_id, film_url in matches:
-                films.append({
-                    "id": film_id,
-                    "url": film_url if film_url.startswith("http") else f"{domain}{film_url}",
-                })
-            if films:
-                print(f"  Домен работает: {domain}, найдено: {len(films)}")
-                return films
-            print(f"  Домен {domain} ответил, но фильмов не найдено (error page?)")
-            last_error = Exception(f"Empty response from {domain}")
-        except Exception as e:
-            last_error = e
-            print(f"  Домен {domain} не ответил: {e}")
+    pattern = r'data-id="(\d+)"\s+data-url="(.*?)"'
+    matches = re.findall(pattern, resp.text)
 
-    raise last_error or RuntimeError("All HDRezka domains failed")
+    films = []
+    for film_id, film_url in matches:
+        films.append({
+            "id": film_id,
+            "url": film_url if film_url.startswith("http") else f"{REZKA_BASE}{film_url}",
+        })
+
+    return films
 
 
 def fetch_film_details(film_url: str) -> dict:
     """Заходит на страницу фильма и парсит полную информацию."""
     try:
-        html = fetch_page(film_url, timeout=20000)
-        soup = BeautifulSoup(html, "html.parser")
+        resp = requests.get(film_url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
+        # Название из h1
         h1 = soup.find("h1")
         title = h1.get_text(strip=True) if h1 else ""
 
+        # Год из og:title
         year = ""
         meta = soup.find("meta", property="og:title")
         if meta:
@@ -137,6 +77,7 @@ def fetch_film_details(film_url: str) -> dict:
             if year_match:
                 year = year_match.group(1)
 
+        # Полная информация из таблицы
         info = {}
         table = soup.find("table", class_="b-post__info")
         if table:
@@ -146,14 +87,17 @@ def fetch_film_details(film_url: str) -> dict:
                 if len(tds) >= 2:
                     label = tds[0].get_text(strip=True).rstrip(":")
                     value = tds[1].get_text(strip=True)
+                    # Убираем "Смотреть трейлер"
                     value = re.sub(r"Смотреть трейлер\s*", "", value).strip()
                     if label and value:
                         info[label] = value
 
+        # Описание (убираем "Смотреть трейлер")
         desc_el = soup.find("div", class_="b-post__description_text")
         description = desc_el.get_text(strip=True) if desc_el else ""
         description = re.sub(r"Смотреть трейлер\s*", "", description).strip()
 
+        # Актёры
         actors = []
         for actor_el in soup.find_all("span", class_="person-name-item"):
             link = actor_el.find("a")
@@ -202,6 +146,7 @@ def format_message(film: dict, description: str, info: dict, actors: list) -> st
             description = description[:797] + "..."
         msg += f"{description}\n\n"
 
+    # Полная информация с эмодзи
     emoji_map = {
         "Рейтинги": "⭐",
         "Дата выхода": "📅",
@@ -220,6 +165,7 @@ def format_message(film: dict, description: str, info: dict, actors: list) -> st
             value = info[key]
             msg += f"{emoji} <b>{key}:</b> {value}\n"
 
+    # Актёры
     if actors:
         actors_str = ", ".join(actors[:8])
         if len(actors) > 8:
@@ -271,6 +217,7 @@ def main():
 
         time.sleep(1)
 
+    # Обновляем state — все найденные фильмы помечаем как увиденные
     all_ids = seen_ids | {f["id"] for f in films}
     save_state(all_ids)
 
