@@ -11,8 +11,8 @@ import sys
 import time
 from pathlib import Path
 
-import cloudscraper
 import requests
+from curl_cffi import requests as curl_requests
 from bs4 import BeautifulSoup
 
 STATE_FILE = Path(__file__).parent / "state.json"
@@ -36,11 +36,11 @@ TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 _SCRAPER = None
 
 
-def make_request(url: str, timeout: int = 30) -> requests.Response:
-    """Делает запрос с cloudscraper (обходит Cloudflare)."""
+def make_request(url: str, timeout: int = 30):
+    """Делает запрос с curl_cffi (имитирует TLS Chrome)."""
     global _SCRAPER
     if _SCRAPER is None:
-        _SCRAPER = cloudscraper.create_scraper()
+        _SCRAPER = curl_requests.Session(impersonate="chrome120")
         _SCRAPER.headers.update(HEADERS)
     return _SCRAPER.get(url, timeout=timeout)
 
