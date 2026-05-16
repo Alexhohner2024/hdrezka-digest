@@ -97,15 +97,25 @@ def fetch_film_details(film_url: str) -> dict:
         description = desc_el.get_text(strip=True) if desc_el else ""
         description = re.sub(r"Смотреть трейлер\s*", "", description).strip()
 
+        # Актёры
+        actors = []
+        for actor_el in soup.find_all("span", class_="person-name-item"):
+            link = actor_el.find("a")
+            if link:
+                span = link.find("span")
+                if span:
+                    actors.append(span.get_text(strip=True))
+
         return {
             "title": title,
             "year": year,
             "description": description,
             "info": info,
+            "actors": actors,
         }
     except Exception as e:
         print(f"  Ошибка парсинга {film_url}: {e}", file=sys.stderr)
-        return {"title": "", "year": "", "description": "", "info": {}}
+        return {"title": "", "year": "", "description": "", "info": {}, "actors": []}
 
 
 def send_telegram(text: str) -> bool:
@@ -127,7 +137,7 @@ def send_telegram(text: str) -> bool:
         return False
 
 
-def format_message(film: dict, description: str, info: dict) -> str:
+def format_message(film: dict, description: str, info: dict, actors: list) -> str:
     year_str = f" ({film['year']})" if film["year"] else ""
     msg = f"<b>🎬 {film['title']}{year_str}</b>\n\n"
 
@@ -153,8 +163,14 @@ def format_message(film: dict, description: str, info: dict) -> str:
     for key, emoji in emoji_map.items():
         if key in info:
             value = info[key]
-            # Убираем "фильмы" из серий если есть
             msg += f"{emoji} <b>{key}:</b> {value}\n"
+
+    # Актёры
+    if actors:
+        actors_str = ", ".join(actors[:8])
+        if len(actors) > 8:
+            actors_str += f" и ещё {len(actors) - 8}"
+        msg += f"\n🎬 <b>В ролях:</b> {actors_str}\n"
 
     msg += f"\n🔗 <a href=\"{film['url']}\">Смотреть на HDRezka</a>"
 
@@ -191,7 +207,7 @@ def main():
         print(f"\n  [{i}/{len(new_films)}] Загрузка страницы {film['url']}...")
 
         details = fetch_film_details(film["url"])
-        msg = format_message({**film, **details}, details["description"], details["info"])
+        msg = format_message({**film, **details}, details["description"], details["info"], details["actors"])
 
         if send_telegram(msg):
             print(f"    ✅ Отправлено: {details['title']} ({details['year']})")
