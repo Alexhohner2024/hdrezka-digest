@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+import cloudscraper
 import requests
 from bs4 import BeautifulSoup
 
@@ -32,12 +33,16 @@ CHAT_ID = os.environ["CHAT_ID"]
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 
+_SCRAPER = None
+
+
 def make_request(url: str, timeout: int = 30) -> requests.Response:
-    """Делает запрос с сессией и cookies, пробует разные домены."""
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    session.get(DOMAINS[0], timeout=10)
-    return session.get(url, timeout=timeout)
+    """Делает запрос с cloudscraper (обходит Cloudflare)."""
+    global _SCRAPER
+    if _SCRAPER is None:
+        _SCRAPER = cloudscraper.create_scraper()
+        _SCRAPER.headers.update(HEADERS)
+    return _SCRAPER.get(url, timeout=timeout)
 
 
 def load_state() -> set:
