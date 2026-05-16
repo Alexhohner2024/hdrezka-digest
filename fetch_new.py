@@ -15,8 +15,11 @@ import requests
 from bs4 import BeautifulSoup
 
 STATE_FILE = Path(__file__).parent / "state.json"
-REZKA_NEW_URL = "https://rezka.ag/new/?filter=last&genre=1"
-REZKA_BASE = "https://rezka.ag"
+
+DOMAINS = [
+    "https://hdrezka.ag",
+    "https://rezka.ag",
+]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -27,6 +30,14 @@ HEADERS = {
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+
+def make_request(url: str, timeout: int = 30) -> requests.Response:
+    """Делает запрос с сессией и cookies, пробует разные домены."""
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    session.get(DOMAINS[0], timeout=10)
+    return session.get(url, timeout=timeout)
 
 
 def load_state() -> set:
@@ -41,26 +52,35 @@ def save_state(seen_ids: set):
 
 
 def fetch_new_films() -> list:
-    resp = requests.get(REZKA_NEW_URL, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
+    last_error = None
+    for domain in DOMAINS:
+        url = f"{domain}/new/?filter=last&genre=1"
+        try:
+            resp = make_request(url, timeout=30)
+            resp.raise_for_status()
+            print(f"  Домен работает: {domain}")
 
-    pattern = r'data-id="(\d+)"\s+data-url="(.*?)"'
-    matches = re.findall(pattern, resp.text)
+            pattern = r'data-id="(\d+)"\s+data-url="(.*?)"'
+            matches = re.findall(pattern, resp.text)
 
-    films = []
-    for film_id, film_url in matches:
-        films.append({
-            "id": film_id,
-            "url": film_url if film_url.startswith("http") else f"{REZKA_BASE}{film_url}",
-        })
+            films = []
+            for film_id, film_url in matches:
+                films.append({
+                    "id": film_id,
+                    "url": film_url if film_url.startswith("http") else f"{domain}{film_url}",
+                })
+            return films
+        except Exception as e:
+            last_error = e
+            print(f"  Домен {domain} не ответил: {e}")
 
-    return films
+    raise last_error or RuntimeError("All HDRezka domains failed")
 
 
 def fetch_film_details(film_url: str) -> dict:
     """Заходит на страницу фильма и парсит полную информацию."""
     try:
-        resp = requests.get(film_url, headers=HEADERS, timeout=15)
+        resp = make_request(film_url, timeout=15)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
