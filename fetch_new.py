@@ -57,8 +57,12 @@ def fetch_page(url: str, timeout: int = 30000) -> str:
     )
     page = context.new_page()
     try:
-        page.goto(url, wait_until="networkidle", timeout=timeout)
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+        page.wait_for_timeout(3000)
         content = page.content()
+        if not re.findall(r'data-id="(\d+)"', content):
+            page.wait_for_timeout(5000)
+            content = page.content()
         return content
     finally:
         context.close()
@@ -92,6 +96,9 @@ def fetch_new_films() -> list:
                     "url": film_url if film_url.startswith("http") else f"{domain}{film_url}",
                 })
             print(f"  Домен работает: {domain}, найдено: {len(films)}")
+            if not films:
+                snippet = html[500:1500] if len(html) > 1500 else html[:1000]
+                print(f"  DEBUG HTML snippet: {snippet[:300]}")
             return films
         except Exception as e:
             last_error = e
