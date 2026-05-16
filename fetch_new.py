@@ -64,22 +64,18 @@ def fetch_page(url: str, timeout: int = 30000) -> str:
             Object.defineProperty(navigator, 'languages', { get: () => ['ru-RU', 'ru', 'en'] });
         """)
         page.goto(url, wait_until="load", timeout=timeout)
-        page_title = page.title()
-        print(f"  Page title: {page_title}")
+        print(f"  Title: {page.title()}")
         print(f"  Final URL: {page.url}")
         try:
-            page.wait_for_selector('[data-id]', timeout=15000)
+            page.wait_for_selector('[data-id]', timeout=10000)
         except Exception:
-            print(f"  No [data-id] elements found via selector")
-        page.wait_for_timeout(3000)
+            pass
+        page.wait_for_timeout(2000)
         content = page.content()
         if not re.findall(r'data-id="(\d+)"', content):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(3000)
             content = page.content()
-        body = page.evaluate("document.body.innerText")
-        print(f"  Body text length: {len(body)} chars")
-        print(f"  Body starts: {body[:300]}")
         return content
     finally:
         context.close()
@@ -112,13 +108,11 @@ def fetch_new_films() -> list:
                     "id": film_id,
                     "url": film_url if film_url.startswith("http") else f"{domain}{film_url}",
                 })
-            print(f"  Домен работает: {domain}, найдено: {len(films)}")
-            if not films:
-                snippet = html[500:2500] if len(html) > 2500 else html[:1500]
-                print(f"  DEBUG HTML snippet:")
-                for line in snippet.split("\n")[:20]:
-                    print(f"    {line.strip()[:200]}")
-            return films
+            if films:
+                print(f"  Домен работает: {domain}, найдено: {len(films)}")
+                return films
+            print(f"  Домен {domain} ответил, но фильмов не найдено (error page?)")
+            last_error = Exception(f"Empty response from {domain}")
         except Exception as e:
             last_error = e
             print(f"  Домен {domain} не ответил: {e}")
